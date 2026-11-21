@@ -178,6 +178,43 @@ export function generateClips(meta, options) {
   });
 }
 
+// Build clips from analysis segments (uploaded videos): same hook/caption pipeline,
+// but the moments come from real loudness+motion scores.
+export function generateClipsFromScores(segments, meta, options) {
+  const duration = clamp(Number(options.duration) || 600, 30, 12 * 3600);
+  const keywords = keywordsFrom(meta.title);
+  const transcriptLines = options.transcript ? splitTranscript(options.transcript) : [];
+  return segments.map((seg, i) => {
+    const seed = seeded(`${meta.videoId}:${seg.start}:${seg.end}`);
+    const hook = choice(HOOKS)(keywords);
+    const desc = choice(DESCS)(keywords);
+    const tags = [
+      '#shorts', '#viral', '#fyp', '#trending',
+      ...keywords.slice(0, 3).map((k) => `#${k.toLowerCase().replace(/[^\w]/g, '')}`),
+    ];
+    const clipLen = Math.max(3, seg.end - seg.start);
+    return {
+      id: `c${Date.now().toString(36)}${i}${Math.floor(seed() * 1e4)}`,
+      videoId: meta.videoId,
+      start: seg.start,
+      end: seg.end,
+      duration,
+      hook,
+      desc,
+      hashtags: [...new Set(tags)].slice(0, 8),
+      score: clamp(Math.round((seg.score || 60) * 0.7 + seed() * 30), 40, 99),
+      captions: captionLines(keywords, clipLen, transcriptLines),
+      style: defaultStyle(),
+      faceTracking: options.type !== 'sports',
+      gameMode: options.type === 'game',
+      music: 'none',
+      musicVolume: 0.3,
+      watermark: '',
+      views: 0,
+    };
+  });
+}
+
 export const VIDEO_TYPES = [
   { id: 'general', label: 'General' },
   { id: 'sports', label: 'Sports Mode' },

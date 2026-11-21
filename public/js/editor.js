@@ -1,10 +1,12 @@
 // Clip editor: live player, caption/style controls, trim, audio and real exports.
 
-import { $, $$, el, esc, fmtTime, fmtClock, toast, safeFilename, downloadText } from './util.js';
+import { $, $$, el, esc, fmtTime, fmtClock, toast, safeFilename, downloadText, downloadBlob } from './util.js';
 import { state, save, getProject } from './store.js';
 import { createPlayer, cueClip } from './yt.js';
 import { STYLE_PRESETS, MUSIC_TRACKS } from './gen.js';
 import { toSRT, toTXT, exportSRT, exportTXT, renderCover, renderPreviewVideo } from './render.js';
+import { loadMedia, saveMedia } from './idb.js';
+import { exportRealClip, isFFmpegReady } from './ffmpeg.js';
 import { go } from './views.js';
 import { openScheduleModal } from './views2.js';
 
@@ -66,48 +68,86 @@ export function renderEditor(root, projectId, clipId) {
   $('#sched', root).addEventListener('click', () => openScheduleModal(p, [clip.id]));
   $('#export-btn', root).addEventListener('click', () => switchTab('export'));
 
-  // ---- player ----
-  let player = null;
+  // ---- media (uploaded file OR YouTube embed) ----
+  let player = null;        // YT player
+  let videoEl = null;       // local <video>
+  let videoUrl = null;      // object URL to revoke
+  let attachedFile = null;  // user-attached local copy (YouTube projects)
   let playing = false;
   let syncTimer = null;
+  let mediaReady = false;
 
   function destroyPlayer() {
     if (syncTimer) { clearInterval(syncTimer); syncTimer = null; }
     if (player) { try { player.destroy(); } catch {} player = null; }
+    if (videoUrl) { URL.revokeObjectURL(videoUrl); videoUrl = null; }
+    videoEl = null;
   }
   window.addEventListener('hashchange', destroyPlayer, { once: true });
 
-  createPlayer($('#player', root), p.videoId, {
-    start: clip.start,
-    end: clip.end,
-    autoplay: 0,
-    onReady: (pl) => {
-      player = pl;
-      cueClip(player, clip);
-      startSync();
-    },
-    onError: () => {
-      const frame = $('#frame', root);
-      if (frame && !frame.querySelector('.embed-fallback')) {
-        frame.insertAdjacentHTML('afterbegin', `<div class="embed-fallback" style="position:absolute;inset:0;display:grid;place-items:center;height:100%;color:var(--muted);font-size:13px;text-align:center;padding:20px;background:#000;z-index:4">This video can't be embedded.<br/>Exports still work from the cover + captions.</div>`);
+  const isUpload = p.sourceType === 'upload';
+  const frame = $('#frame', root);
+
+  async function setupMedia() {
+    if (isUpload) {
+      let file = null;
+      try { file = await loadMedia(p.videoId); } catch {}
+      if (!file) {
+        frame.insertAdjacentHTML('afterbegin', `<div class="embed-fallback" style="position:absolute;inset:0;display:grid;place-items:center;height:100%;color:var(--muted);font-size:13px;text-align:center;padding:20px;background:#000;z-index:4">Source video missing.<br/>Re-attach it from the Export tab to enable real MP4 export.</div>`);
+        return;
       }
-    },
-  });
+      videoUrl = URL.createObjectURL(file);
+      frame.insertAdjacentHTML('afterbegin', `<video id="local-video" src="${videoUrl}" playsinline style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000"></video>`);
+      videoEl = document.getElementById('local-video');
+      videoEl.addEventListener('loadedmetadata', () => { videoEl.currentTime = clip.start; });
+      mediaReady = true;
+      startSync();
+      return;
+    }
+    // YouTube project: pick up a previously attached local copy, if any.
+    try {
+      const f = await loadMedia(p.videoId);
+      if (f) {
+        attachedFile = f;
+        const activeTab = $('.tab.on', root);
+        if (activeTab && activeTab.dataset.tab === 'export') renderExportTab();
+      }
+    } catch {}
+    createPlayer($('#player', root), p.videoId, {
+      start: clip.start,
+      end: clip.end,
+      autoplay: 0,
+      onReady: (pl) => {
+        player = pl;
+        cueClip(player, clip);
+        mediaReady = true;
+        startSync();
+      },
+      onError: () => {
+        if (frame && !frame.querySelector('.embed-fallback')) {
+          frame.insertAdjacentHTML('afterbegin', `<div class="embed-fallback" style="position:absolute;inset:0;display:grid;place-items:center;height:100%;color:var(--muted);font-size:13px;text-align:center;padding:20px;background:#000;z-index:4">This video can't be embedded.<br/>Exports still work from the cover + captions.</div>`);
+        }
+      },
+    });
+  }
+
+  const currentTime = () => (videoEl ? videoEl.currentTime : (player && player.getCurrentTime ? player.getCurrentTime() : clip.start));
+  const isPlayingNow = () => (videoEl ? !videoEl.paused && !videoEl.ended : (player && player.getPlayerState && player.getPlayerState() === 1));
 
   function startSync() {
     if (syncTimer) clearInterval(syncTimer);
     syncTimer = setInterval(() => {
-      if (!player || !player.getCurrentTime) return;
-      const t = player.getCurrentTime();
+      if (!mediaReady) return;
+      const t = currentTime();
+      if (!Number.isFinite(t)) return;
       const rel = Math.max(0, t - clip.start);
       $('#t-cur', root).textContent = fmtTime(rel);
       const scrub = $('#scrub', root);
       if (document.activeElement !== scrub) scrub.value = rel;
       $('#prog', root).style.width = `${Math.min(100, (rel / (clip.end - clip.start)) * 100)}%`;
       updateOverlay(t - clip.start);
-      const state = player.getPlayerState && player.getPlayerState();
-      setPlayIcon(state === 1);
-      if (state === 0 && playing) { playing = false; setPlayIcon(false); }
+      setPlayIcon(isPlayingNow());
+      if (videoEl && videoEl.currentTime >= clip.end - 0.05 && !videoEl.paused) { videoEl.pause(); }
     }, 120);
   }
 
@@ -117,6 +157,14 @@ export function renderEditor(root, projectId, clipId) {
   }
 
   $('#play', root).addEventListener('click', () => {
+    if (videoEl) {
+      if (videoEl.paused) {
+        if (videoEl.currentTime >= clip.end - 0.2) videoEl.currentTime = clip.start;
+        videoEl.play();
+      } else videoEl.pause();
+      setPlayIcon(!videoEl.paused);
+      return;
+    }
     if (!player) return;
     if (player.getPlayerState() === 1) { player.pauseVideo(); setPlayIcon(false); }
     else {
@@ -126,11 +174,13 @@ export function renderEditor(root, projectId, clipId) {
     }
   });
   $('#scrub', root).addEventListener('input', (e) => {
-    if (!player) return;
-    player.seekTo(clip.start + Number(e.target.value), true);
+    const t = clip.start + Number(e.target.value);
+    if (videoEl) videoEl.currentTime = t;
+    else if (player) player.seekTo(t, true);
     $('#t-cur', root).textContent = fmtTime(Number(e.target.value));
     updateOverlay(Number(e.target.value));
   });
+  setupMedia();
 
   // ---- caption overlay ----
   let currentLine = null;
@@ -329,7 +379,8 @@ export function renderEditor(root, projectId, clipId) {
 
   function afterTrim() {
     commit();
-    if (player && player.seekTo) { try { player.seekTo(clip.start, true); } catch {} }
+    if (videoEl) { try { videoEl.currentTime = clip.start; } catch {} }
+    else if (player && player.seekTo) { try { player.seekTo(clip.start, true); } catch {} }
     $('#scrub', root).max = Math.max(1, clip.end - clip.start);
     updateOverlay(0);
   }
@@ -353,18 +404,34 @@ export function renderEditor(root, projectId, clipId) {
   }
 
   function renderExportTab() {
+    const hasLocal = isUpload || attachedFile;
+    const aspect = clip.aspect || p.options.aspect || '9:16';
     body.innerHTML = `
-      <div class="export-box">
-        <h4>🎬 Preview video (WebM)</h4>
-        <p>Renders a real .webm in your browser: motion cover, your styled captions, watermark and progress bar.</p>
+      ${hasLocal ? `
+      <div class="export-box" style="border-color:rgba(47,212,138,.4)">
+        <h4>🎬 Export real MP4</h4>
+        <p>Ai cuts the exact clip, crops to ${aspect}, burns your styled captions, watermark and music. Rendered locally by ffmpeg — nothing is uploaded.</p>
         <div class="seg" id="q-seg" style="margin-bottom:12px">
           <button data-a="720" class="${state.settings.renderQuality === '720' ? 'on' : ''}">720p</button>
           <button data-a="1080" class="${state.settings.renderQuality === '1080' ? 'on' : ''}">1080p</button>
         </div>
-        <button class="btn btn-primary btn-block" id="render">Render preview video</button>
+        <button class="btn btn-primary btn-block" id="render-mp4">Export MP4</button>
+        <div class="render-progress hidden" id="mp4-prog" style="margin-top:12px"><i></i></div>
+        <div class="small muted hidden" id="mp4-status" style="margin-top:6px"></div>
+      </div>` : `
+      <div class="export-box">
+        <h4>🎬 Real MP4 export</h4>
+        <p>Attach the source video file (e.g. the same YouTube video downloaded to your computer). Ai then cuts it, crops it, burns captions and mixes music — a real .mp4, rendered locally.</p>
+        <button class="btn btn-accent btn-block" id="attach-file">Attach video file</button>
+        <input type="file" id="attach-input" accept="video/*" style="display:none"/>
+      </div>
+      <div class="export-box">
+        <h4>🎞️ Preview video (WebM)</h4>
+        <p>Lightweight preview render (motion cover + your captions). Works without the source file.</p>
+        <button class="btn btn-ghost btn-block" id="render-webm">Render preview video</button>
         <div class="render-progress hidden" id="render-prog" style="margin-top:12px"><i></i></div>
         <div class="small muted hidden" id="render-pct" style="margin-top:6px">0%</div>
-      </div>
+      </div>`}
       <div class="export-box">
         <h4>📄 Caption file</h4>
         <p>Download the caption timing as .srt — drop it into CapCut, Premiere or any editor.</p>
@@ -384,17 +451,44 @@ export function renderEditor(root, projectId, clipId) {
     $$('#q-seg button', body).forEach((b) => b.addEventListener('click', () => {
       state.settings.renderQuality = b.dataset.a; save(); renderExportTab();
     }));
-    $('#render', body).addEventListener('click', async () => {
-      const btn = $('#render', body);
-      btn.disabled = true;
+
+    const mp4Btn = $('#render-mp4', body);
+    if (mp4Btn) mp4Btn.addEventListener('click', async () => {
+      mp4Btn.disabled = true;
+      const prog = $('#mp4-prog', body), status = $('#mp4-status', body);
+      prog.classList.remove('hidden'); status.classList.remove('hidden');
+      status.textContent = 'Loading video engine (first time ~10s)…';
+      try {
+        const file = isUpload ? await loadMedia(p.videoId) : attachedFile;
+        if (!file) throw new Error('Source video not found — re-attach it.');
+        const blob = await exportRealClip({
+          file, clip, aspect, quality: state.settings.renderQuality,
+          watermark: clip.watermark || state.settings.watermark || '',
+          musicId: clip.music || 'none', musicVolume: clip.musicVolume ?? 0.25,
+          onProgress: (pct) => {
+            prog.querySelector('i').style.width = `${Math.round(pct * 100)}%`;
+            status.textContent = `Rendering… ${Math.round(pct * 100)}%`;
+          },
+        });
+        downloadBlob(blob, `${safeFilename(clip.hook)}.mp4`);
+        status.textContent = 'Done — MP4 downloaded.';
+        toast('MP4 downloaded', 'ok');
+      } catch (err) {
+        console.error(err);
+        status.textContent = `Export failed: ${err.message}`;
+        toast(`Export failed: ${err.message}`, 'err');
+      } finally {
+        mp4Btn.disabled = false;
+      }
+    });
+
+    const webmBtn = $('#render-webm', body);
+    if (webmBtn) webmBtn.addEventListener('click', async () => {
+      webmBtn.disabled = true;
       $('#render-prog', body).classList.remove('hidden');
       $('#render-pct', body).classList.remove('hidden');
       try {
-        await renderPreviewVideo(clip, p, {
-          quality: state.settings.renderQuality,
-          aspect: clip.aspect || p.options.aspect || '9:16',
-          watermark: clip.watermark || '',
-        }, (pct) => {
+        await renderPreviewVideo(clip, p, { quality: state.settings.renderQuality, aspect, watermark: clip.watermark || '' }, (pct) => {
           $('#render-prog i', body).style.width = `${Math.round(pct * 100)}%`;
           $('#render-pct', body).textContent = `${Math.round(pct * 100)}%`;
         });
@@ -402,9 +496,24 @@ export function renderEditor(root, projectId, clipId) {
       } catch (err) {
         toast(`Render failed: ${err.message}`, 'err');
       } finally {
-        btn.disabled = false;
+        webmBtn.disabled = false;
       }
     });
+
+    const attachBtn = $('#attach-file', body);
+    if (attachBtn) {
+      const input = $('#attach-input', body);
+      attachBtn.addEventListener('click', () => input.click());
+      input.addEventListener('change', async () => {
+        const f = input.files[0];
+        if (!f) return;
+        attachedFile = f;
+        try { await saveMedia(p.videoId, f); } catch {}
+        toast('Video attached — real MP4 export enabled', 'ok');
+        renderExportTab();
+      });
+    }
+
     $('#dl-srt', body).addEventListener('click', () => { exportSRT(clip, p); toast('SRT downloaded', 'ok'); });
     $('#dl-cover', body).addEventListener('click', async () => { await renderCover(clip, p, state.settings.renderQuality); toast('Cover downloaded', 'ok'); });
     $('#dl-txt', body).addEventListener('click', () => { exportTXT(clip, p); toast('Package downloaded', 'ok'); });

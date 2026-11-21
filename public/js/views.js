@@ -1,9 +1,11 @@
 // Landing page, login, dashboard and clip-results views.
 
-import { $, $$, el, esc, fmtTime, fmtDate, fmtNum, toast, uid, safeFilename, downloadText, seeded } from './util.js';
+import { $, $$, el, esc, fmtTime, fmtDate, fmtNum, toast, uid, safeFilename, downloadText, downloadBlob, seeded } from './util.js';
 import { state, save, upsertProject, getProject, addCredits, spendCredit } from './store.js';
 import { parseYouTube, fetchVideoMeta, fetchChannelVideos, thumbUrl, fetchDuration, watchUrl } from './yt.js';
-import { generateClips, VIDEO_TYPES, LANGUAGES, STYLE_PRESETS } from './gen.js';
+import { generateClips, generateClipsFromScores, VIDEO_TYPES, LANGUAGES, STYLE_PRESETS } from './gen.js';
+import { analyzeVideoFile, pickSegments } from './analyze.js';
+import { saveMedia, loadMedia, deleteMedia } from './idb.js';
 import { exportSRT, exportTXT, renderCover } from './render.js';
 import { scoreRing, openModal, confirmDialog, PLATFORMS } from './ui.js';
 
@@ -285,6 +287,18 @@ export function renderDashboard(root) {
     <div id="channel-result"></div>
     <div id="progress-area"></div>
     <div class="small" style="margin-top:14px;color:var(--muted-2)">No link handy? <a href="#" id="demo-link" style="color:var(--accent-2)">Try a demo video</a></div>
+    <div style="margin-top:18px;border-top:1px dashed var(--line-2);padding-top:18px">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <div style="font-weight:800">📁 หรืออัปโหลดวิดีโอของคุณเอง</div>
+        <div class="small muted">Ai วิเคราะห์เสียง+ภาพจริง แล้วตัดออกมาเป็น MP4 พร้อมซับ</div>
+      </div>
+      <label class="dropzone" id="dropzone" style="display:grid;place-items:center;gap:6px;margin-top:12px;padding:26px;border:1.5px dashed var(--line-2);border-radius:14px;cursor:pointer;text-align:center;color:var(--muted);transition:border-color .15s ease,background .15s ease">
+        <input type="file" id="file-input" accept="video/*" style="display:none"/>
+        <div style="font-size:26px">🎥</div>
+        <div style="font-weight:700;color:var(--text)">คลิกเพื่อเลือกวิดีโอ หรือลากมาวางที่นี่</div>
+        <div class="small">MP4 · MOV · WEBM · MKV — วิดีโอต้นฉบับจะอยู่ในเบราว์เซอร์ของคุณ (IndexedDB)</div>
+      </label>
+    </div>
   </div>
 
   <div class="section-head">
@@ -323,6 +337,78 @@ export function renderDashboard(root) {
     } catch { toast('Clipboard blocked — paste manually', 'err'); }
   });
   $('#demo-link', root).addEventListener('click', (e) => { e.preventDefault(); $('#url-input', root).value = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'; start('https://www.youtube.com/watch?v=dQw4w9WgXcQ'); });
+
+  // ---- upload your own video → real analysis + real exports ----
+  const dz = $('#dropzone', root);
+  const fi = $('#file-input', root);
+  dz.addEventListener('click', () => fi.click());
+  fi.addEventListener('change', () => { if (fi.files[0]) startUpload(fi.files[0]); fi.value = ''; });
+  ['dragover', 'dragleave', 'drop'].forEach((ev) => dz.addEventListener(ev, (e) => {
+    e.preventDefault();
+    dz.style.borderColor = ev === 'dragleave' ? '' : 'var(--accent)';
+    if (ev === 'drop' && e.dataTransfer.files[0]) startUpload(e.dataTransfer.files[0]);
+  }));
+
+  async function startUpload(file) {
+    if (!file) return;
+    if (!/^video\//.test(file.type) && !/\.(mp4|mov|webm|mkv|avi|m4v|mts)$/i.test(file.name)) {
+      return toast('กรุณาเลือกไฟล์วิดีโอ (MP4/MOV/WEBM)', 'err');
+    }
+    const area = $('#progress-area');
+    const steps = ['Reading video', 'Analyzing audio energy', 'Scanning motion', 'Scoring viral moments', 'Writing hooks & captions'];
+    area.innerHTML = `
+      <div class="progress-card">
+        <b>${esc(file.name)}</b> <span class="small muted">${(file.size / 1048576).toFixed(1)} MB</span>
+        <div class="progress-steps">${steps.map((s, i) => `<div class="p-step" data-i="${i}"><span class="dot">${i + 1}</span> ${s}</div>`).join('')}</div>
+        <div class="progress-bar"><i id="pbar"></i></div>
+      </div>`;
+    const stepEls = $$('.p-step', area);
+    const setStep = (i, pct) => {
+      stepEls.forEach((s, j) => {
+        s.classList.toggle('done', j < i);
+        s.classList.toggle('active', j === i);
+        if (j < i) s.querySelector('.dot').textContent = '✓';
+      });
+      if (pct != null) $('#pbar', area).style.width = `${Math.round(pct * 100)}%`;
+    };
+    setStep(0, 0.02);
+    try {
+      const analysis = await analyzeVideoFile(file, { onProgress: (p) => setStep(1 + Math.min(2, Math.floor(p * 3)), 0.05 + p * 0.7) });
+      setStep(3, 0.85);
+      const count = Number($('#opt-count', root).value) || 6;
+      const segs = pickSegments(analysis.scores, analysis.duration, count);
+      if (!segs.length) throw new Error('video is too short to clip');
+      setStep(4, 0.95);
+      const transcript = $('#opt-transcript', root).value.trim();
+      const meta = {
+        videoId: `up_${uid('u')}`,
+        title: file.name.replace(/\.[^.]+$/, ''),
+        channel: 'Your upload',
+        thumbnail: await capturePoster(file),
+        url: '',
+      };
+      const clips = generateClipsFromScores(segs, meta, {
+        duration: analysis.duration, count, type: $('#opt-type', root).value, transcript,
+      });
+      clips.forEach((c) => { c.aspect = $('#opt-aspect', root).value; });
+      await saveMedia(meta.videoId, file);
+      const project = {
+        id: uid('p'), sourceType: 'upload', fileName: file.name,
+        url: '', videoId: meta.videoId, title: meta.title, channel: meta.channel,
+        thumbnail: meta.thumbnail, duration: analysis.duration, createdAt: Date.now(),
+        options: { type: $('#opt-type', root).value, aspect: $('#opt-aspect', root).value, lang: $('#opt-lang', root).value, count },
+        clips,
+      };
+      upsertProject(project);
+      setStep(5, 1);
+      toast('Clips ready — real video export enabled!', 'ok');
+      setTimeout(() => go(`#/app/results/${project.id}`), 400);
+    } catch (err) {
+      console.error(err);
+      toast(`Upload failed: ${err.message}`, 'err');
+      area.innerHTML = '';
+    }
+  }
   $('#get-clips', root).addEventListener('click', () => {
     const url = $('#url-input', root).value.trim();
     if (!url) return toast('Paste a YouTube link first', 'err');
@@ -444,6 +530,38 @@ export function renderDashboard(root) {
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
+async function capturePoster(file) {
+  try {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement('video');
+    v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
+    await new Promise((res, rej) => { v.onloadeddata = () => res(); v.onerror = () => rej(new Error('load')); });
+    v.currentTime = Math.min(1.5, (v.duration || 2) / 2);
+    await new Promise((res) => { v.onseeked = () => res(); });
+    const c = document.createElement('canvas');
+    c.width = 640;
+    c.height = v.videoWidth ? Math.round(640 * (v.videoHeight / v.videoWidth)) : 360;
+    c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+    return c.toDataURL('image/jpeg', 0.72);
+  } catch { return ''; }
+}
+
+export async function exportProjectClip(project, clip) {
+  const file = await loadMedia(project.videoId);
+  if (!file) throw new Error('Source video not found — re-upload it to export MP4');
+  const { exportRealClip } = await import('./ffmpeg.js');
+  const blob = await exportRealClip({
+    file, clip,
+    aspect: clip.aspect || project.options.aspect || '9:16',
+    quality: state.settings.renderQuality,
+    watermark: clip.watermark || state.settings.watermark || '',
+    musicId: clip.music || 'none',
+    musicVolume: clip.musicVolume ?? 0.25,
+  });
+  downloadBlob(blob, `${safeFilename(clip.hook)}.mp4`);
+}
+
 /* ============================== RESULTS ============================== */
 
 export function renderResults(root, projectId) {
@@ -483,6 +601,9 @@ export function renderResults(root, projectId) {
           <div class="clip-foot">${scoreRing(c.score)}<span class="small muted">virality score</span></div>
           <div class="clip-actions">
             <button class="btn btn-sm btn-accent" data-edit="${c.id}">Edit</button>
+            ${p.sourceType === 'upload'
+              ? `<button class="btn btn-sm btn-primary" data-mp4="${c.id}">MP4</button>`
+              : `<button class="btn btn-sm btn-ghost" data-srt="${c.id}">SRT</button>`}
             <button class="btn btn-sm btn-ghost" data-srt="${c.id}">SRT</button>
             <button class="btn btn-sm btn-ghost" data-cover="${c.id}">Cover</button>
           </div>
@@ -500,6 +621,18 @@ export function renderResults(root, projectId) {
       card.querySelector('[data-edit]').addEventListener('click', () => go(`#/app/edit/${p.id}/${clip.id}`));
       card.querySelector('[data-srt]').addEventListener('click', () => { exportSRT(clip, p); toast('SRT downloaded', 'ok'); });
       card.querySelector('[data-cover]').addEventListener('click', async () => { await renderCover(clip, p, state.settings.renderQuality); toast('Cover downloaded', 'ok'); });
+      const mp4Btn = card.querySelector('[data-mp4]');
+      if (mp4Btn) mp4Btn.addEventListener('click', async () => {
+        mp4Btn.disabled = true;
+        const old = mp4Btn.textContent;
+        mp4Btn.textContent = 'Rendering…';
+        try {
+          await exportProjectClip(p, clip);
+          toast('MP4 downloaded', 'ok');
+        } catch (err) { toast(err.message, 'err'); }
+        mp4Btn.disabled = false;
+        mp4Btn.textContent = old;
+      });
     });
     $('#schedule-sel', root).disabled = selected.size === 0;
     $('#schedule-sel', root).textContent = `Schedule (${selected.size})`;
@@ -535,15 +668,24 @@ async function downloadAll(p) {
 }
 
 function openPlayerModal(p, clip) {
-  const { close } = openModal(`
+  openModal(`
     <div class="modal-head"><h3>${esc(clip.hook)}</h3></div>
     <div class="modal-body">
       <div style="position:relative;aspect-ratio:16/9;background:#000;border-radius:12px;overflow:hidden" id="modal-player"></div>
       <div class="small muted" style="margin-top:10px">${fmtTime(clip.start)} – ${fmtTime(clip.end)} · ${esc(p.title)}</div>
     </div>`, { wide: true });
-  import('./yt.js').then(({ createPlayer }) => {
-    const host = document.getElementById('modal-player');
-    if (host) createPlayer(host, p.videoId, { start: clip.start, end: clip.end, autoplay: true });
-  });
-  close;
+  const host = document.getElementById('modal-player');
+  if (p.sourceType === 'upload') {
+    loadMedia(p.videoId).then((file) => {
+      if (!file || !host) return;
+      const url = URL.createObjectURL(file);
+      host.innerHTML = `<video src="${url}" controls autoplay style="width:100%;height:100%"></video>`;
+      const v = host.querySelector('video');
+      v.addEventListener('loadeddata', () => { v.currentTime = clip.start; });
+    });
+  } else {
+    import('./yt.js').then(({ createPlayer }) => {
+      if (host) createPlayer(host, p.videoId, { start: clip.start, end: clip.end, autoplay: true });
+    });
+  }
 }
