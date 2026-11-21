@@ -92,7 +92,7 @@ async function render() {
       view.classList.add('flush');
       view.style.padding = '0';
       view.style.maxWidth = 'none';
-      renderEditor(view, hash.split('/')[3], hash.split('/')[4]);
+      await renderEditor(view, hash.split('/')[3], hash.split('/')[4]);
     }
     else if (hash.startsWith('#/app/automation')) renderAutomation(view);
     else if (hash.startsWith('#/app/rewards')) renderRewards(view);

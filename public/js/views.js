@@ -1,11 +1,12 @@
 // Landing page, login, dashboard and clip-results views.
 
 import { $, $$, el, esc, fmtTime, fmtDate, fmtNum, toast, uid, safeFilename, downloadText, downloadBlob, seeded } from './util.js';
-import { state, save, upsertProject, getProject, addCredits, spendCredit } from './store.js';
+import { state, save, upsertProject, getProject } from './store.js';
 import { parseYouTube, fetchVideoMeta, fetchChannelVideos, thumbUrl, fetchDuration, watchUrl } from './yt.js';
-import { generateClips, generateClipsFromScores, VIDEO_TYPES, LANGUAGES, STYLE_PRESETS } from './gen.js';
+import { generateClipsFromScores, VIDEO_TYPES, LANGUAGES } from './gen.js';
 import { analyzeVideoFile, pickSegments } from './analyze.js';
-import { saveMedia, loadMedia, deleteMedia } from './idb.js';
+import { loadMedia } from './idb.js';
+import { getProjectMedia, storeUploadMedia, mediaCtaHtml, wireMediaCta } from './download.js';
 import { exportSRT, exportTXT, renderCover } from './render.js';
 import { scoreRing, openModal, confirmDialog, PLATFORMS } from './ui.js';
 
@@ -391,7 +392,7 @@ export function renderDashboard(root) {
         duration: analysis.duration, count, type: $('#opt-type', root).value, transcript,
       });
       clips.forEach((c) => { c.aspect = $('#opt-aspect', root).value; });
-      await saveMedia(meta.videoId, file);
+      await storeUploadMedia(meta.videoId, file);
       const project = {
         id: uid('p'), sourceType: 'upload', fileName: file.name,
         url: '', videoId: meta.videoId, title: meta.title, channel: meta.channel,
@@ -456,7 +457,7 @@ export function renderDashboard(root) {
     const btn = $('#get-clips', root);
     btn.disabled = true;
     const area = $('#progress-area');
-    const steps = ['Fetching video info', 'Reading duration', 'Analyzing viral moments', 'Writing hooks & captions', 'Scoring clips', 'Building your clips'];
+    const steps = ['Fetching video info', 'Reading duration', 'Preparing local source analysis'];
     area.innerHTML = `
       <div class="progress-card">
         <b>${esc(presetTitle || metaSeed.title || 'Your video')}</b>
@@ -473,7 +474,6 @@ export function renderDashboard(root) {
       $('#pbar', area).style.width = `${Math.round((i / steps.length) * 100)}%`;
     };
     setStep(0);
-    await sleep(450);
 
     let meta = metaSeed;
     if (!meta.title || !meta.channel) {
@@ -482,32 +482,11 @@ export function renderDashboard(root) {
     }
     setStep(1);
     const duration = await fetchDuration(meta.videoId);
-    await sleep(350);
-    if (!duration || duration <= 0) toast('Could not read duration — using an estimate. You can trim in the editor.', '');
+    if (!duration || duration <= 0) toast('Could not read duration — the local analysis will determine it after download.', '');
     setStep(2);
-    await sleep(650);
-    setStep(3);
-    await sleep(650);
 
     const count = Number($('#opt-count', root).value) || 6;
     const transcript = $('#opt-transcript', root).value.trim();
-    const clips = generateClips(meta, {
-      duration: duration || 600,
-      count,
-      type: $('#opt-type', root).value,
-      lang: $('#opt-lang', root).value,
-      transcript,
-    });
-    clips.forEach((c) => { c.aspect = $('#opt-aspect', root).value; });
-    setStep(4);
-    await sleep(550);
-    setStep(5);
-    await sleep(500);
-
-    if (!spendCredit() && state.plan === 'Free') {
-      // free tier still allows it, just warn
-      toast('Free plan: 1 clip set used', '');
-    }
 
     const project = {
       id: uid('p'),
@@ -518,17 +497,18 @@ export function renderDashboard(root) {
       thumbnail: meta.thumbnail,
       duration: duration || 600,
       createdAt: Date.now(),
+      sourceType: 'youtube',
+      userTranscript: transcript,
+      captionsSource: transcript ? 'user-transcript' : 'pending',
       options: { type: $('#opt-type', root).value, aspect: $('#opt-aspect', root).value, lang: $('#opt-lang', root).value, count },
-      clips,
+      clips: [],
     };
     upsertProject(project);
     $('#pbar', area).style.width = '100%';
-    toast('Clips ready!', 'ok');
+    toast('Project ready — download the source to analyze real clip moments.', 'ok');
     setTimeout(() => go(`#/app/results/${project.id}`), 450);
   }
 }
-
-function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 async function capturePoster(file) {
   try {
@@ -547,17 +527,20 @@ async function capturePoster(file) {
   } catch { return ''; }
 }
 
-export async function exportProjectClip(project, clip) {
-  const file = await loadMedia(project.videoId);
-  if (!file) throw new Error('Source video not found — re-upload it to export MP4');
+export async function exportProjectClip(project, clip, onProgress) {
+  const media = await getProjectMedia(project.videoId);
+  if (!media) throw new Error('ยังไม่มีวิดีโอต้นฉบับ — กด "ดึงวิดีโอ + คำบรรยาย" หรือแนบไฟล์ก่อน');
   const { exportRealClip } = await import('./ffmpeg.js');
+  const file = media.video;
+  if (!file.name) file.name = `${project.videoId}.mp4`;
   const blob = await exportRealClip({
-    file, clip,
+    file, audioFile: media.audio, clip,
     aspect: clip.aspect || project.options.aspect || '9:16',
     quality: state.settings.renderQuality,
     watermark: clip.watermark || state.settings.watermark || '',
     musicId: clip.music || 'none',
     musicVolume: clip.musicVolume ?? 0.25,
+    onProgress,
   });
   downloadBlob(blob, `${safeFilename(clip.hook)}.mp4`);
 }
@@ -581,12 +564,30 @@ export function renderResults(root, projectId) {
     <button class="btn btn-accent btn-sm" id="schedule-sel" disabled>Schedule</button>
     <button class="btn btn-primary btn-sm" id="download-all">Download all</button>
   </div>
+  <div id="media-slot"></div>
   <div class="clip-grid" id="clip-grid"></div>`;
 
   const grid = $('#clip-grid', root);
   const selected = new Set();
+  let mediaChecked = false;
+
+  async function refreshMediaSlot() {
+    const slot = $('#media-slot', root);
+    if (!slot || mediaChecked) return;
+    mediaChecked = true;
+    let media = null;
+    try { media = await getProjectMedia(p.videoId); } catch {}
+    if ((!media || !p.analysisSource) && p.sourceType !== 'upload') {
+      slot.innerHTML = mediaCtaHtml();
+      wireMediaCta(p, slot, { onDone: () => { mediaChecked = false; slot.innerHTML = ''; draw(); } });
+    }
+  }
 
   const draw = () => {
+    if (!p.clips.length) {
+      grid.innerHTML = '<div class="empty card"><div class="big">🎬</div><h3>Source analysis required</h3><p class="muted">Fetch the real video to analyze its audio and motion and create clip candidates.</p></div>';
+      return;
+    }
     grid.innerHTML = p.clips.map((c) => `
       <div class="clip-card ${selected.has(c.id) ? 'selected' : ''}" data-id="${c.id}">
         <div class="clip-thumb" data-play="${c.id}">
@@ -601,9 +602,7 @@ export function renderResults(root, projectId) {
           <div class="clip-foot">${scoreRing(c.score)}<span class="small muted">virality score</span></div>
           <div class="clip-actions">
             <button class="btn btn-sm btn-accent" data-edit="${c.id}">Edit</button>
-            ${p.sourceType === 'upload'
-              ? `<button class="btn btn-sm btn-primary" data-mp4="${c.id}">MP4</button>`
-              : `<button class="btn btn-sm btn-ghost" data-srt="${c.id}">SRT</button>`}
+            <button class="btn btn-sm btn-primary" data-mp4="${c.id}">MP4</button>
             <button class="btn btn-sm btn-ghost" data-srt="${c.id}">SRT</button>
             <button class="btn btn-sm btn-ghost" data-cover="${c.id}">Cover</button>
           </div>
@@ -627,9 +626,17 @@ export function renderResults(root, projectId) {
         const old = mp4Btn.textContent;
         mp4Btn.textContent = 'Rendering…';
         try {
-          await exportProjectClip(p, clip);
+          await exportProjectClip(p, clip, (pct) => { mp4Btn.textContent = `${Math.round(pct * 100)}%`; });
           toast('MP4 downloaded', 'ok');
-        } catch (err) { toast(err.message, 'err'); }
+        } catch (err) {
+          if (err.message.includes('ยังไม่มีวิดีโอ')) {
+            const { openModal } = await import('./ui.js');
+            const m = openModal(`<div class="modal-head"><h3>เปิดระบบตัดวิดีโอจริง</h3></div><div class="modal-body">${mediaCtaHtml()}</div>`);
+            wireMediaCta(p, m.modal, { onDone: () => { m.close(); draw(); } });
+          } else {
+            toast(err.message, 'err');
+          }
+        }
         mp4Btn.disabled = false;
         mp4Btn.textContent = old;
       });
@@ -649,6 +656,7 @@ export function renderResults(root, projectId) {
     draw();
   });
   $('#download-all', root).addEventListener('click', () => downloadAll(p));
+  refreshMediaSlot();
   $('#schedule-sel', root).addEventListener('click', () => {
     import('./views2.js').then(({ openScheduleModal }) => openScheduleModal(p, [...selected]));
   });

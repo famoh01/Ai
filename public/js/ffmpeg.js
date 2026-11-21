@@ -112,7 +112,7 @@ function wrapCaption(text, px, maxW) {
 const escNum = (n) => (Math.round(n * 100) / 100).toString();
 
 // Build the ffmpeg plan (pure — also unit-tested in Node against real ffmpeg).
-export function buildExportPlan({ clip, aspect = '9:16', quality = '1080', watermark = '', musicId = 'none', musicVolume = 0.25, fileName = 'clip.mp4', audio = true }) {
+export function buildExportPlan({ clip, aspect = '9:16', quality = '1080', watermark = '', musicId = 'none', musicVolume = 0.25, fileName = 'clip.mp4', audio = true, separateAudio = false }) {
   const dims = (ASPECT_DIMS[aspect] || ASPECT_DIMS['9:16'])[quality === '720' ? 'sd' : 'hd'];
   const [W, H] = dims;
   const a = aspect.split(':').map(Number);
@@ -180,20 +180,31 @@ export function buildExportPlan({ clip, aspect = '9:16', quality = '1080', water
   filterComplex.push(`[0:v]${vfilters.join(',')}[v]`);
 
   const args = ['-y', '-ss', escNum(clip.start), '-t', escNum(clipLen), '-i', 'INPUT'];
+  if (separateAudio) args.push('-i', 'AUDIO');
   if (audio && musicId && musicId !== 'none') {
     args.push('-i', 'music.wav');
-    filterComplex.push(
-      `[0:a]volume=1.0[a0];[1:a]aloop=loop=-1:size=44100,volume=${musicVolume}[a1];[a0][a1]amix=inputs=2:duration=first:dropout_transition=0[a]`
-    );
+    if (separateAudio) {
+      filterComplex.push(`[2:a]aloop=loop=-1:size=44100,volume=${musicVolume}[a]`);
+    } else {
+      filterComplex.push(
+        `[0:a]volume=1.0[a0];[1:a]aloop=loop=-1:size=44100,volume=${musicVolume}[a1];[a0][a1]amix=inputs=2:duration=first:dropout_transition=0[a]`
+      );
+    }
   }
 
   args.push('-filter_complex', filterComplex.join(';'));
   args.push('-map', '[v]');
   if (audio) {
-    args.push('-map', filterComplex.length > 1 ? '[a]' : '0:a?', '-c:a', 'aac', '-b:a', '128k');
+    if (separateAudio) {
+      args.push('-map', musicId && musicId !== 'none' ? '[a]' : '1:a');
+    } else {
+      args.push('-map', filterComplex.length > 1 ? '[a]' : '0:a?', '-c:a', 'aac', '-b:a', '128k');
+    }
+    if (separateAudio) args.push('-c:a', 'aac', '-b:a', '128k');
   } else {
     args.push('-an');
   }
+  if (separateAudio) args.push('-shortest');
   args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-movflags', '+faststart');
   args.push('out.mp4');
 
@@ -202,7 +213,7 @@ export function buildExportPlan({ clip, aspect = '9:16', quality = '1080', water
 
 // --- run -------------------------------------------------------------
 
-export async function exportRealClip({ file, clip, aspect, quality, watermark, musicId, musicVolume, onProgress }) {
+export async function exportRealClip({ file, audioFile = null, clip, aspect, quality, watermark, musicId, musicVolume, onProgress }) {
   const { inst } = await loadFFmpeg();
   const ext = (file.name?.split('.').pop() || 'mp4').toLowerCase();
   const inputName = ['mp4', 'mov', 'webm', 'mkv', 'avi', 'm4v', 'mts', 'm2ts'].includes(ext) ? `in.${ext}` : 'in.mp4';
@@ -211,14 +222,22 @@ export async function exportRealClip({ file, clip, aspect, quality, watermark, m
     if (onProgress && Number.isFinite(progress)) onProgress(Math.max(0, Math.min(1, progress)));
   });
 
-  const run = async (plan, withMusic) => {
+  const run = async (plan, withMusic, withSeparateAudio) => {
     const uploads = [{ name: inputName, data: await toU8(file) }];
+    if (withSeparateAudio && audioFile) {
+      const aext = (audioFile.name?.split('.').pop() || 'm4a').toLowerCase();
+      uploads.push({ name: `audio.${aext}`, data: await toU8(audioFile) });
+    }
     for (const f of plan.files) {
       uploads.push(f.url ? { name: f.name, data: await toU8(f.url) } : { name: f.name, data: new TextEncoder().encode(f.text) });
     }
     if (withMusic) uploads.push({ name: 'music.wav', data: new Uint8Array(renderMusicWav(plan.musicId, Math.ceil(plan.clipLen) + 1)) });
     for (const u of uploads) await inst.writeFile(u.name, u.data);
-    const args = plan.args.map((a) => (a === 'INPUT' ? inputName : a));
+    const args = plan.args.map((a) => {
+      if (a === 'INPUT') return inputName;
+      if (a === 'AUDIO') return uploads.find((u) => u.name.startsWith('audio.'))?.name || 'audio.m4a';
+      return a;
+    });
     await inst.exec(args);
     const data = await inst.readFile('out.mp4');
     for (const u of uploads) { try { await inst.deleteFile(u.name); } catch {} }
@@ -227,13 +246,13 @@ export async function exportRealClip({ file, clip, aspect, quality, watermark, m
     return new Blob([data.slice().buffer], { type: 'video/mp4' });
   };
 
-  const plan = buildExportPlan({ clip, aspect, quality, watermark, musicId, musicVolume, audio: true });
+  const plan = buildExportPlan({ clip, aspect, quality, watermark, musicId, musicVolume, audio: true, separateAudio: !!audioFile });
   plan.musicId = musicId;
   try {
-    return await run(plan, !!(musicId && musicId !== 'none'));
+    return await run(plan, !!(musicId && musicId !== 'none'), !!audioFile);
   } catch (err) {
     // Retry without audio (source may have no audio track / unsupported codec).
-    const silent = buildExportPlan({ clip, aspect, quality, watermark, musicId: 'none', audio: false });
-    return await run(silent, false);
+    const silent = buildExportPlan({ clip, aspect, quality, watermark, musicId: 'none', audio: false, separateAudio: false });
+    return await run(silent, false, false);
   }
 }

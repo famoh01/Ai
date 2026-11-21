@@ -3,9 +3,10 @@
 import { $, $$, el, esc, fmtTime, fmtClock, toast, safeFilename, downloadText, downloadBlob } from './util.js';
 import { state, save, getProject } from './store.js';
 import { createPlayer, cueClip } from './yt.js';
-import { STYLE_PRESETS, MUSIC_TRACKS } from './gen.js';
+import { STYLE_PRESETS, MUSIC_TRACKS, defaultStyle } from './gen.js';
 import { toSRT, toTXT, exportSRT, exportTXT, renderCover, renderPreviewVideo } from './render.js';
 import { loadMedia, saveMedia } from './idb.js';
+import { getProjectMedia, mediaCtaHtml, wireMediaCta } from './download.js';
 import { exportRealClip, isFFmpegReady } from './ffmpeg.js';
 import { go } from './views.js';
 import { openScheduleModal } from './views2.js';
@@ -15,6 +16,7 @@ export function renderEditor(root, projectId, clipId) {
   if (!p) { root.innerHTML = '<div class="empty card"><h3>Project not found</h3></div>'; return; }
   let clip = p.clips.find((c) => c.id === clipId) || p.clips[0];
   if (!clip) { root.innerHTML = '<div class="empty card"><h3>No clips in this project</h3></div>'; return; }
+  clip.style = clip.style || defaultStyle();
 
   root.innerHTML = `
   <div class="editor">
@@ -73,6 +75,7 @@ export function renderEditor(root, projectId, clipId) {
   let videoEl = null;       // local <video>
   let videoUrl = null;      // object URL to revoke
   let attachedFile = null;  // user-attached local copy (YouTube projects)
+  let localMedia = null;   // { video, audio } fetched from Piped / uploaded
   let playing = false;
   let syncTimer = null;
   let mediaReady = false;
@@ -89,30 +92,28 @@ export function renderEditor(root, projectId, clipId) {
   const frame = $('#frame', root);
 
   async function setupMedia() {
-    if (isUpload) {
-      let file = null;
-      try { file = await loadMedia(p.videoId); } catch {}
-      if (!file) {
-        frame.insertAdjacentHTML('afterbegin', `<div class="embed-fallback" style="position:absolute;inset:0;display:grid;place-items:center;height:100%;color:var(--muted);font-size:13px;text-align:center;padding:20px;background:#000;z-index:4">Source video missing.<br/>Re-attach it from the Export tab to enable real MP4 export.</div>`);
-        return;
-      }
+    // Prefer a real local copy (uploaded file, or media fetched from YouTube via Piped).
+    let media = null;
+    try { media = await getProjectMedia(p.videoId); } catch {}
+    if (media && media.video) {
+      localMedia = media;
+      const file = media.video;
+      if (!file.name) file.name = `${p.videoId}.mp4`;
       videoUrl = URL.createObjectURL(file);
       frame.insertAdjacentHTML('afterbegin', `<video id="local-video" src="${videoUrl}" playsinline style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000"></video>`);
       videoEl = document.getElementById('local-video');
       videoEl.addEventListener('loadedmetadata', () => { videoEl.currentTime = clip.start; });
       mediaReady = true;
       startSync();
+      const activeTab = $('.tab.on', root);
+      if (activeTab && activeTab.dataset.tab === 'export') renderExportTab();
       return;
     }
-    // YouTube project: pick up a previously attached local copy, if any.
-    try {
-      const f = await loadMedia(p.videoId);
-      if (f) {
-        attachedFile = f;
-        const activeTab = $('.tab.on', root);
-        if (activeTab && activeTab.dataset.tab === 'export') renderExportTab();
-      }
-    } catch {}
+    if (isUpload) {
+      frame.insertAdjacentHTML('afterbegin', `<div class="embed-fallback" style="position:absolute;inset:0;display:grid;place-items:center;height:100%;color:var(--muted);font-size:13px;text-align:center;padding:20px;background:#000;z-index:4">Source video missing.<br/>Re-attach it from the Export tab to enable real MP4 export.</div>`);
+      return;
+    }
+    // YouTube project without a local copy → embed the player.
     createPlayer($('#player', root), p.videoId, {
       start: clip.start,
       end: clip.end,
@@ -190,7 +191,7 @@ export function renderEditor(root, projectId, clipId) {
     currentLine = line;
     const box = $('#cap-text', root);
     if (!line) { box.innerHTML = ''; return; }
-    const anim = clip.style.animation || 'pop';
+    const anim = (clip.style && clip.style.animation) || 'pop';
     box.className = `caption-text anim-${anim}`;
     const words = line.text.split(' ');
     box.innerHTML = words.map((w, i) => `<span style="animation-delay:${Math.min(i * 45, 700)}ms">${esc(w)}</span>`).join(' ');
@@ -404,7 +405,7 @@ export function renderEditor(root, projectId, clipId) {
   }
 
   function renderExportTab() {
-    const hasLocal = isUpload || attachedFile;
+    const hasLocal = !!localMedia || !!attachedFile;
     const aspect = clip.aspect || p.options.aspect || '9:16';
     body.innerHTML = `
       ${hasLocal ? `
@@ -419,8 +420,9 @@ export function renderEditor(root, projectId, clipId) {
         <div class="render-progress hidden" id="mp4-prog" style="margin-top:12px"><i></i></div>
         <div class="small muted hidden" id="mp4-status" style="margin-top:6px"></div>
       </div>` : `
+      ${!isUpload ? mediaCtaHtml() : ''}
       <div class="export-box">
-        <h4>🎬 Real MP4 export</h4>
+        <h4>📎 หรือแนบไฟล์วิดีโอจากเครื่อง</h4>
         <p>Attach the source video file (e.g. the same YouTube video downloaded to your computer). Ai then cuts it, crops it, burns captions and mixes music — a real .mp4, rendered locally.</p>
         <button class="btn btn-accent btn-block" id="attach-file">Attach video file</button>
         <input type="file" id="attach-input" accept="video/*" style="display:none"/>
@@ -459,10 +461,13 @@ export function renderEditor(root, projectId, clipId) {
       prog.classList.remove('hidden'); status.classList.remove('hidden');
       status.textContent = 'Loading video engine (first time ~10s)…';
       try {
-        const file = isUpload ? await loadMedia(p.videoId) : attachedFile;
+        let media = localMedia;
+        if (!media) { try { media = await getProjectMedia(p.videoId); } catch {} }
+        const file = media?.video || attachedFile;
         if (!file) throw new Error('Source video not found — re-attach it.');
+        if (!file.name) file.name = `${p.videoId}.mp4`;
         const blob = await exportRealClip({
-          file, clip, aspect, quality: state.settings.renderQuality,
+          file, audioFile: media?.audio || null, clip, aspect, quality: state.settings.renderQuality,
           watermark: clip.watermark || state.settings.watermark || '',
           musicId: clip.music || 'none', musicVolume: clip.musicVolume ?? 0.25,
           onProgress: (pct) => {
@@ -499,6 +504,16 @@ export function renderEditor(root, projectId, clipId) {
         webmBtn.disabled = false;
       }
     });
+
+    const mediaFetchBtn = $('#media-fetch', body);
+    if (mediaFetchBtn) {
+      wireMediaCta(p, body, {
+        onDone: (media) => {
+          localMedia = media;
+          window.dispatchEvent(new Event('hashchange'));   // rebuild editor with the real local video
+        },
+      });
+    }
 
     const attachBtn = $('#attach-file', body);
     if (attachBtn) {

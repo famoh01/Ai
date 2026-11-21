@@ -73,7 +73,7 @@ async function analyzeMotion(video, duration, onProgress) {
   return out;
 }
 
-export async function analyzeVideoFile(file, { onProgress } = {}) {
+export async function analyzeVideoFile(file, { onProgress, audioFile = null } = {}) {
   const url = URL.createObjectURL(file);
   const video = document.createElement('video');
   video.preload = 'auto';
@@ -90,7 +90,8 @@ export async function analyzeVideoFile(file, { onProgress } = {}) {
   if (!Number.isFinite(duration) || duration <= 0) duration = 600;
 
   onProgress && onProgress(0.05);
-  const loud = await analyzeAudio(file, duration, onProgress);
+  let loud = null;
+  try { loud = await analyzeAudio(audioFile || file, duration, onProgress); } catch { /* some codecs cannot be decoded by Web Audio */ }
   const motion = await analyzeMotion(video, duration, onProgress);
 
   // combine into a 0..1 moment-score curve

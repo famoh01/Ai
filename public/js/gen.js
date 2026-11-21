@@ -215,6 +215,16 @@ export function generateClipsFromScores(segments, meta, options) {
   });
 }
 
+// Rewrite hooks/descriptions using keywords mined from a REAL transcript.
+export function refreshHooksFromTranscript(clips, cues) {
+  if (!cues || !cues.length) return;
+  const keywords = keywordsFrom(cues.map((c) => c.text).join(' '));
+  clips.forEach((clip) => {
+    clip.hook = choice(HOOKS)(keywords);
+    clip.desc = choice(DESCS)(keywords);
+  });
+}
+
 export const VIDEO_TYPES = [
   { id: 'general', label: 'General' },
   { id: 'sports', label: 'Sports Mode' },
