@@ -1,0 +1,10 @@
+{
+  "name": "ai-clip-maker",
+  "version": "1.0.0",
+  "description": "Ai — AI clip maker: turn long YouTube videos into viral shorts with auto-clips, captions, hooks and scheduling.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT"
+}
