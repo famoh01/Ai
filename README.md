@@ -25,7 +25,7 @@ in the repository once; the workflow will then publish the site.
 
 | Area | Details |
 | --- | --- |
-| Landing page | Marketing page with hero rotator, features, how-it-works, sources, automation, pricing |
+| Landing page | Marketing page with hero rotator, features, how-it-works, sources and an owner-access (no billing) section |
 | Auth | Sign in / sign up / Google / Apple (stored locally) + guest mode |
 | Dashboard | YouTube video/channel URL **or** drag-&-drop video upload, video type (General/Sports/Game), aspect, caption language, clip count, optional transcript |
 | Real analysis | Uploaded and downloaded YouTube sources are scanned per-second: audio RMS loudness + frame-differencing motion → moment scores → non-overlapping clip segments |
@@ -38,7 +38,8 @@ in the repository once; the workflow will then publish the site.
 | Rewards / Analytics / Pricing | Campaigns, canvas charts, plans with credit top-ups |
 
 Projects, clips, queue and settings persist in `localStorage`; uploaded source videos persist in
-`IndexedDB`. Nothing is uploaded to a server.
+`IndexedDB`. Nothing is uploaded to a server. This owner-operated copy has unlimited local usage and
+no payment processor, subscription gate, or credit top-up flow.
 
 ## Notes
 

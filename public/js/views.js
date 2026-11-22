@@ -135,13 +135,14 @@ export function renderLanding(root) {
 
   <section class="section" id="pricing">
     <div class="section-head-center">
-      <h2>Plans from $6/mo · Cancel anytime</h2>
-      <div class="billing-toggle" id="billing-toggle">
-        <button data-b="monthly">Monthly</button>
-        <button data-b="yearly" class="on">Yearly · save 60%</button>
-      </div>
+      <h2>Owner access — no top-ups, no subscription</h2>
+      <p class="lead">This is your own Ai copy. Clip creation is unlimited and this site does not collect payments.</p>
     </div>
-    <div class="pricing-grid" id="pricing-grid"></div>
+    <div class="card" style="max-width:760px;margin:0 auto;padding:28px;text-align:center">
+      <div class="badge badge-grad" style="display:inline-flex;margin-bottom:12px">OWNER · UNLIMITED</div>
+      <p class="muted">Your projects and media stay in your browser. No plan purchase or credit top-up is required to use this copy.</p>
+      <a class="btn btn-primary" href="#/signup" style="margin-top:12px">Open Ai</a>
+    </div>
   </section>
 
   <footer class="footer">
@@ -161,39 +162,6 @@ export function renderLanding(root) {
     if (rot) rot.textContent = ROTATOR[ri];
   }, 2200);
 
-  renderPricingCards(root);
-  $$('#billing-toggle button', root).forEach((b) => b.addEventListener('click', () => {
-    $$('#billing-toggle button', root).forEach((x) => x.classList.toggle('on', x === b));
-    renderPricingCards(root, b.dataset.b);
-  }));
-
-  function renderPricingCards(scope, billing = 'yearly') {
-    const plans = [
-      { name: 'PRO', m: 15, y: 6, credits: '360 video credits / year', socials: '1 social account', tag: '' },
-      { name: 'EXPERT', m: 30, y: 12, credits: '840 video credits / year', socials: '3 social accounts', tag: 'Most chosen' },
-      { name: 'BUSINESS', m: 60, y: 24, credits: '1,800 video credits / year', socials: 'Unlimited social accounts', tag: 'Best value' },
-      { name: 'CUSTOM', m: 100, y: 40, credits: '2,600 video credits / year', socials: 'Unlimited social accounts', tag: '' },
-    ];
-    $('#pricing-grid', scope).innerHTML = plans.map((p) => {
-      const price = billing === 'yearly' ? p.y : p.m;
-      const per = billing === 'yearly' ? `per month · $${p.y * 12}/year` : 'per month';
-      return `
-      <div class="plan ${p.tag ? 'hot' : ''}">
-        ${p.tag ? `<span class="tag badge badge-grad">${p.tag}</span>` : ''}
-        <h3>${p.name}</h3>
-        <div class="price"><s>$${p.m}</s>$${price}</div>
-        <div class="per">${per}</div>
-        <ul>
-          <li>AI Clipping</li>
-          <li>Access to APIs</li>
-          <li>Schedule and Post</li>
-          <li>${p.credits}</li>
-          <li>${p.socials}</li>
-        </ul>
-        <a class="btn ${p.tag ? 'btn-primary' : 'btn-ghost'} btn-block" href="#/app/pricing">${billing === 'yearly' ? 'Upgrade' : 'Choose ' + p.name}</a>
-      </div>`;
-    }).join('');
-  }
 }
 
 /* ============================== LOGIN ============================== */

@@ -29,7 +29,7 @@ function buildShell(activeHash) {
   <div class="app-shell">
     <aside class="sidebar" id="sidebar">
       <div class="side-logo"><span class="logo-mark">Ai</span> Ai</div>
-      <div class="credits-pill">⚡ <b>${state.credits}</b> <span class="muted small">credits</span></div>
+      <div class="credits-pill">∞ <b>Unlimited</b> <span class="muted small">owner access</span></div>
       <nav id="side-nav"></nav>
       <div class="side-bottom">
         <button class="side-item" data-nav="#/login" id="side-user"><span class="ico">◎</span> <span id="side-user-name">${esc(state.user?.name || 'Guest')}</span></button>
@@ -41,7 +41,7 @@ function buildShell(activeHash) {
         <button class="icon-btn" id="menu-btn" style="display:none">☰</button>
         <div class="crumb" id="crumb">Dashboard</div>
         <div class="spacer"></div>
-        <button class="btn btn-ghost btn-sm" id="top-credits">⚡ ${state.credits} credits</button>
+        <button class="btn btn-ghost btn-sm" id="top-credits">∞ Owner · Unlimited</button>
         <div class="avatar" id="avatar" title="Account">${esc((state.user?.name || 'G').slice(0, 1).toUpperCase())}</div>
       </div>
       <div class="content" id="view"></div>

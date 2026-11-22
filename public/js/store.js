@@ -4,8 +4,8 @@ const KEY = 'ai_app_v1';
 
 const DEFAULTS = {
   user: null,          // { name, email, guest }
-  credits: 12,
-  plan: 'Free',
+  credits: -1,         // -1 means unlimited owner access
+  plan: 'Owner',
   billing: 'monthly',
   projects: [],        // see gen.js for project/clip shape
   queue: [],           // scheduled posts
@@ -23,13 +23,17 @@ function load() {
     const raw = localStorage.getItem(KEY);
     if (!raw) return structuredClone(DEFAULTS);
     const data = JSON.parse(raw);
-    return { ...structuredClone(DEFAULTS), ...data, settings: { ...DEFAULTS.settings, ...(data.settings || {}) } };
+    // This deployed copy belongs to its owner: migrate old demo-plan state and
+    // never expose simulated credit limits or paid subscription gates.
+    return { ...structuredClone(DEFAULTS), ...data, plan: 'Owner', credits: -1, settings: { ...DEFAULTS.settings, ...(data.settings || {}) } };
   } catch {
     return structuredClone(DEFAULTS);
   }
 }
 
 export function save() {
+  state.plan = 'Owner';
+  state.credits = -1;
   try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* storage full/blocked */ }
 }
 
@@ -45,14 +49,15 @@ export function nextId(prefix) {
   return `${prefix}${n.toString(36)}`;
 }
 
-export function addCredits(n) {
-  state.credits = Math.max(0, (state.credits || 0) + n);
+export function addCredits(_n) {
+  // Retained for compatibility with older UI code; owner access is unlimited.
+  state.credits = -1;
   save();
 }
 
 export function spendCredit() {
-  if (state.credits <= 0) return false;
-  state.credits -= 1;
+  // No billing or credit gate in this owner-operated copy.
+  state.credits = -1;
   save();
   return true;
 }

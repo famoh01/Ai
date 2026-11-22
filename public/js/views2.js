@@ -1,7 +1,7 @@
 // Automation, rewards, analytics, pricing and settings + the schedule modal.
 
 import { $, $$, el, esc, fmtDate, fmtNum, fmtTime, toast, uid, seeded, safeFilename } from './util.js';
-import { state, save, addCredits, getProject } from './store.js';
+import { state, save, getProject } from './store.js';
 import { openModal, PLATFORMS, platformChip } from './ui.js';
 import { go } from './views.js';
 
@@ -304,49 +304,17 @@ function emptyChart(ctx, W, H) {
 /* ============================== PRICING (app) ============================== */
 
 export function renderPricing(root) {
-  const plans = [
-    { name: 'PRO', m: 15, y: 6, credits: 360, socials: '1 social account' },
-    { name: 'EXPERT', m: 30, y: 12, credits: 840, socials: '3 social accounts' },
-    { name: 'BUSINESS', m: 60, y: 24, credits: 1800, socials: 'Unlimited social accounts' },
-    { name: 'CUSTOM', m: 100, y: 40, credits: 2600, socials: 'Unlimited social accounts' },
-  ];
   root.innerHTML = `
-  <h1 class="page-title">Pricing</h1>
-  <p class="page-sub">Current plan: <b style="color:var(--text)">${esc(state.plan)}</b> · ${state.credits} credits left.</p>
-  <div class="billing-toggle" id="app-billing">
-    <button data-b="monthly">Monthly</button>
-    <button data-b="yearly" class="${state.billing === 'yearly' ? 'on' : ''}">Yearly · save 60%</button>
-  </div>
-  <div class="pricing-grid" id="app-pricing"></div>`;
-
-  const draw = (billing) => {
-    $('#app-pricing', root).innerHTML = plans.map((p) => {
-      const price = billing === 'yearly' ? p.y : p.m;
-      const isCurrent = state.plan === p.name;
-      return `
-      <div class="plan ${p.name === 'EXPERT' ? 'hot' : ''}">
-        ${p.name === 'EXPERT' ? '<span class="tag badge badge-grad">Most chosen</span>' : ''}
-        <h3>${p.name}</h3>
-        <div class="price"><s>$${p.m}</s>$${price}</div>
-        <div class="per">${billing === 'yearly' ? `per month · billed $${p.y * 12}/year` : 'per month, billed monthly'}</div>
-        <ul><li>AI Clipping</li><li>Access to APIs</li><li>Schedule and Post</li><li>${p.credits} video credits / year</li><li>${p.socials}</li></ul>
-        <button class="btn ${isCurrent ? 'btn-ghost' : p.name === 'EXPERT' ? 'btn-primary' : 'btn-ghost'} btn-block" data-plan="${p.name}" ${isCurrent ? 'disabled' : ''}>${isCurrent ? 'Current plan' : 'Upgrade'}</button>
-      </div>`;
-    }).join('');
-    $$('[data-plan]', root).forEach((b) => b.addEventListener('click', () => {
-      state.plan = b.dataset.plan;
-      addCredits(plans.find((p) => p.name === state.plan).credits);
-      save();
-      toast(`Plan ${state.plan} activated — credits added`, 'ok');
-      renderPricing(root);
-    }));
-  };
-  draw(state.billing);
-  $$('#app-billing button', root).forEach((b) => b.addEventListener('click', () => {
-    $$('#app-billing button', root).forEach((x) => x.classList.toggle('on', x === b));
-    state.billing = b.dataset.b; save();
-    draw(b.dataset.b);
-  }));
+  <h1 class="page-title">Owner access</h1>
+  <p class="page-sub">You own this Ai copy. No subscription, payment, or credit top-up is required.</p>
+  <div class="card" style="max-width:720px;padding:28px">
+    <div class="badge badge-grad" style="display:inline-flex;margin-bottom:12px">OWNER · UNLIMITED</div>
+    <h2 style="margin:0 0 8px">All local clip tools are unlocked</h2>
+    <p class="muted">Create and export clips without credit limits. Your projects and source files are stored in this browser.</p>
+    <p class="small muted">No payment processor is connected to this site. Social publishing still requires separate platform API/OAuth setup.</p>
+    <button class="btn btn-primary" id="owner-back">Back to dashboard</button>
+  </div>`;
+  $('#owner-back', root).addEventListener('click', () => go('#/app'));
 }
 
 /* ============================== SETTINGS MODAL ============================== */
