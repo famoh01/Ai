@@ -19,7 +19,7 @@ function ensureVendorScript() {
   if (vendorPromise) return vendorPromise;
   vendorPromise = new Promise((resolve, reject) => {
     const s = document.createElement('script');
-    s.src = '/vendor/ffmpeg/ffmpeg.js';
+    s.src = new URL('../vendor/ffmpeg/ffmpeg.js', import.meta.url).href;
     s.onload = () => resolve();
     s.onerror = () => reject(new Error('Could not load the video engine (vendor/ffmpeg/ffmpeg.js)'));
     document.head.appendChild(s);
@@ -38,9 +38,9 @@ export async function loadFFmpeg() {
     const inst = new FFmpeg();
     inst.on('log', () => {});
     await inst.load({
-      coreURL: '/vendor/ffmpeg/ffmpeg-core.esm.js',
-      wasmURL: '/vendor/ffmpeg/ffmpeg-core.wasm',
-      classWorkerURL: '/vendor/ffmpeg/814.ffmpeg.js',
+      coreURL: new URL('../vendor/ffmpeg/ffmpeg-core.esm.js', import.meta.url).href,
+      wasmURL: new URL('../vendor/ffmpeg/ffmpeg-core.wasm', import.meta.url).href,
+      classWorkerURL: new URL('../vendor/ffmpeg/814.ffmpeg.js', import.meta.url).href,
     });
     ffmpeg = { inst };
     return ffmpeg;
@@ -130,7 +130,7 @@ export function buildExportPlan({ clip, aspect = '9:16', quality = '1080', water
   vfilters.push(`crop=min(iw\\,ih*${a[0]}/${a[1]}):min(ih\\,iw*${a[1]}/${a[0]}):(iw-ow)/2:(ih-oh)/2`);
   vfilters.push(`scale=${W}:${H}:flags=lanczos`);
 
-  const files = [{ name: 'font.ttf', url: '/vendor/fonts/NotoSansThai-Bold.ttf' }];
+  const files = [{ name: 'font.ttf', url: new URL('../vendor/fonts/NotoSansThai-Bold.ttf', import.meta.url).href }];
   const pos = style.position || 'bottom';
 
   clip.captions.forEach((cap, i) => {

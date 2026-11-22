@@ -17,6 +17,9 @@ npm start          # serves on http://localhost:3000
 ```
 
 No build step and no runtime dependencies — plain HTML/CSS/ES modules behind a tiny Node static server.
+For a public GitHub Pages deployment, the `Deploy Ai to GitHub Pages` workflow publishes `public/` from
+`arena/c6abac24-ai`. If Pages is not enabled yet, choose **Settings → Pages → Source: GitHub Actions**
+in the repository once; the workflow will then publish the site.
 
 ## What's inside
 
