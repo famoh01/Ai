@@ -3,7 +3,7 @@
 const KEY = 'ai_app_v1';
 
 const DEFAULTS = {
-  user: null,          // { name, email, guest }
+  user: { name: 'Guest', email: '', guest: true }, // anonymous local workspace; no login required
   credits: -1,         // -1 means unlimited owner access
   plan: 'Owner',
   billing: 'monthly',
@@ -25,7 +25,7 @@ function load() {
     const data = JSON.parse(raw);
     // This deployed copy belongs to its owner: migrate old demo-plan state and
     // never expose simulated credit limits or paid subscription gates.
-    return { ...structuredClone(DEFAULTS), ...data, plan: 'Owner', credits: -1, settings: { ...DEFAULTS.settings, ...(data.settings || {}) } };
+    return { ...structuredClone(DEFAULTS), ...data, user: data.user || structuredClone(DEFAULTS.user), plan: 'Owner', credits: -1, settings: { ...DEFAULTS.settings, ...(data.settings || {}) } };
   } catch {
     return structuredClone(DEFAULTS);
   }

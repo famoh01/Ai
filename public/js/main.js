@@ -2,7 +2,7 @@
 
 import { $, el, esc } from './util.js';
 import { state, save } from './store.js';
-import { renderLanding, renderLogin, renderDashboard, renderResults, go } from './views.js';
+import { renderLanding, renderDashboard, renderResults, go } from './views.js';
 import { renderEditor } from './editor.js';
 import { renderAutomation, renderRewards, renderAnalytics, renderPricing, openSettingsModal } from './views2.js';
 
@@ -32,7 +32,7 @@ function buildShell(activeHash) {
       <div class="credits-pill">∞ <b>Unlimited</b> <span class="muted small">owner access</span></div>
       <nav id="side-nav"></nav>
       <div class="side-bottom">
-        <button class="side-item" data-nav="#/login" id="side-user"><span class="ico">◎</span> <span id="side-user-name">${esc(state.user?.name || 'Guest')}</span></button>
+        <div class="side-item" id="side-user" style="cursor:default"><span class="ico">◎</span> <span id="side-user-name">Local workspace</span></div>
         <button class="side-item" id="side-settings"><span class="ico">⚙</span> Settings</button>
       </div>
     </aside>
@@ -54,7 +54,6 @@ function buildShell(activeHash) {
     b.addEventListener('click', () => { go(n.hash); closeSidebar(); });
     nav.appendChild(b);
   });
-  $$('[data-nav]', shell).forEach((b) => b.addEventListener('click', () => { if (b.id === 'side-user') go('#/login'); }));
   $('#side-settings', shell).addEventListener('click', () => openSettingsModal());
   $('#avatar', shell).addEventListener('click', () => openSettingsModal());
   $('#top-credits', shell).addEventListener('click', () => go('#/app/pricing'));
@@ -75,11 +74,22 @@ async function render() {
   const app = document.getElementById('app');
   document.title = 'Ai — AI Clip Maker';
 
+  // Legacy sign-in URLs now lead straight into the public app.
+  if (hash === '#/login' || hash === '#/signup') {
+    window.location.hash = '#/app';
+    return;
+  }
+
+  // Every visitor can use the app without creating an account.
+  if (!state.user) {
+    state.user = { name: 'Guest', email: '', guest: true };
+    save();
+  }
+
   // destroy any leftover editor player
   window.dispatchEvent(new Event('ai:route-change'));
 
   if (hash.startsWith('#/app')) {
-    if (!state.user) { renderLogin(app, hash); return; }
     const shell = buildShell(hash);
     app.innerHTML = '';
     app.appendChild(shell);
@@ -109,8 +119,7 @@ async function render() {
   }
 
   app.innerHTML = '';
-  if (hash === '#/login' || hash === '#/signup') renderLogin(app, '#/app');
-  else renderLanding(app);
+  renderLanding(app);
 }
 
 window.addEventListener('hashchange', render);

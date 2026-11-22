@@ -324,7 +324,6 @@ export function openSettingsModal() {
     <div class="modal-head"><h3>Settings</h3></div>
     <div class="modal-body">
       <label class="field"><span>Display name</span><input class="input" id="set-name" value="${esc(state.user?.name || '')}"/></label>
-      <label class="field"><span>Email</span><input class="input" id="set-email" value="${esc(state.user?.email || '')}"/></label>
       <label class="field"><span>Default watermark</span><input class="input" id="set-wm" value="${esc(state.settings.watermark || '')}" placeholder="@yourhandle"/></label>
       <div class="setting-row">
         <div class="lbl"><b>Render quality</b><span>Preview videos &amp; covers</span></div>
@@ -335,7 +334,6 @@ export function openSettingsModal() {
       </div>
       <div style="display:flex;gap:10px;margin-top:18px;flex-wrap:wrap">
         <button class="btn btn-primary" id="set-save">Save</button>
-        <button class="btn btn-ghost" id="set-signout">Sign out</button>
         <button class="btn btn-danger" id="set-reset">Reset all data</button>
       </div>
     </div>`);
@@ -345,15 +343,12 @@ export function openSettingsModal() {
     $$('#set-q button', modal).forEach((x) => x.classList.toggle('on', x === b));
   }));
   $('#set-save', modal).addEventListener('click', () => {
-    state.user = { ...(state.user || {}), name: $('#set-name', modal).value.trim() || 'Guest', email: $('#set-email', modal).value.trim() };
+    state.user = { ...(state.user || {}), name: $('#set-name', modal).value.trim() || 'Guest', guest: true };
     state.settings.watermark = $('#set-wm', modal).value.trim();
     save();
     close();
     toast('Settings saved', 'ok');
     window.location.reload();
-  });
-  $('#set-signout', modal).addEventListener('click', () => {
-    state.user = null; save(); close(); go('#/login');
   });
   $('#set-reset', modal).addEventListener('click', async () => {
     const { confirmDialog } = await import('./ui.js');

@@ -26,7 +26,7 @@ in the repository once; the workflow will then publish the site.
 | Area | Details |
 | --- | --- |
 | Landing page | Marketing page with hero rotator, features, how-it-works, sources and an owner-access (no billing) section |
-| Auth | Sign in / sign up / Google / Apple (stored locally) + guest mode |
+| Access | No login required; each visitor gets a separate local workspace in their browser |
 | Dashboard | YouTube video/channel URL **or** drag-&-drop video upload, video type (General/Sports/Game), aspect, caption language, clip count, optional transcript |
 | Real analysis | Uploaded and downloaded YouTube sources are scanned per-second: audio RMS loudness + frame-differencing motion → moment scores → non-overlapping clip segments |
 | Clip analysis | Source-derived audio/motion scores and clip candidates; hook/description text uses local templates, not a hosted AI model |

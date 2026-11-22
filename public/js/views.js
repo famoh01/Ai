@@ -24,20 +24,20 @@ export function renderLanding(root) {
       <div class="nav-links">
         <a href="#features">Features</a>
         <a href="#how">How it works</a>
-        <a href="#pricing">Pricing</a>
+        <a href="#pricing">Owner access</a>
         <a href="#automation">Automation</a>
       </div>
       <div class="nav-right">
-        <a class="btn btn-ghost btn-sm" href="#/login">Sign in</a>
+        <a class="btn btn-ghost btn-sm" href="#/app">Open Ai</a>
         <a class="btn btn-primary btn-sm" href="#/app">Get Clips Now</a>
       </div>
     </div>
   </nav>
 
   <header class="hero">
-    <div class="badge badge-grad" style="font-size:12px">AI SHORTS CLIPPER</div>
+    <div class="badge badge-grad" style="font-size:12px">AI SHORTS CLIPPER · NO LOGIN REQUIRED</div>
     <h1>Reassemble <span class="rotator" id="rotator">podcasts</span> into<br/>Viral Shorts</h1>
-    <p class="sub">Ai auto-clips, captions, and posts your videos to TikTok, YouTube, Instagram &amp; X. Paste a link — get scroll-stopping clips in minutes.</p>
+    <p class="sub">Open Ai and start clipping without signing in. Your projects are saved in this browser; no account or payment is required.</p>
     <div class="hero-cta">
       <a class="btn btn-primary btn-lg" href="#/app">Get Clips Now</a>
       <a class="btn btn-ghost btn-lg" href="#how">See how it works</a>
@@ -46,7 +46,7 @@ export function renderLanding(root) {
       <div class="stat"><b>3.4M+</b><span>shorts clippers</span></div>
       <div class="stat"><b>4.6 / 5</b><span>rating on Google</span></div>
       <div class="stat"><b>448M</b><span>views in Sep 2026</span></div>
-      <div class="stat"><b>$6/mo</b><span>plans · cancel anytime</span></div>
+      <div class="stat"><b>Free</b><span>no login or top-up</span></div>
     </div>
   </header>
 
@@ -141,7 +141,7 @@ export function renderLanding(root) {
     <div class="card" style="max-width:760px;margin:0 auto;padding:28px;text-align:center">
       <div class="badge badge-grad" style="display:inline-flex;margin-bottom:12px">OWNER · UNLIMITED</div>
       <p class="muted">Your projects and media stay in your browser. No plan purchase or credit top-up is required to use this copy.</p>
-      <a class="btn btn-primary" href="#/signup" style="margin-top:12px">Open Ai</a>
+      <a class="btn btn-primary" href="#/app" style="margin-top:12px">Open Ai</a>
     </div>
   </section>
 
@@ -149,7 +149,7 @@ export function renderLanding(root) {
     <div class="footer-inner">
       <div><span class="logo"><span class="logo-mark">Ai</span> Ai</span> &nbsp;·&nbsp; AI clip maker for creators.</div>
       <div>
-        <a href="#features">Features</a><a href="#how">How it works</a><a href="#pricing">Pricing</a><a href="#/login">Sign in</a>
+        <a href="#features">Features</a><a href="#how">How it works</a><a href="#pricing">Owner access</a><a href="#/app">Open Ai</a>
       </div>
     </div>
   </footer>`;
@@ -162,57 +162,6 @@ export function renderLanding(root) {
     if (rot) rot.textContent = ROTATOR[ri];
   }, 2200);
 
-}
-
-/* ============================== LOGIN ============================== */
-
-export function renderLogin(root, redirect = '#/app') {
-  let mode = 'signin';
-  root.innerHTML = `
-  <div class="auth-wrap">
-    <div class="auth-card">
-      <div class="logo"><span class="logo-mark">Ai</span> Ai</div>
-      <h1 id="auth-title">Sign in to your account</h1>
-      <div class="sub" id="auth-sub">New to Ai? <a id="auth-switch">Sign up</a></div>
-      <button class="oauth-btn" id="oauth-google"><span style="font-weight:900;color:#fff">G</span> Log in with Google</button>
-      <button class="oauth-btn" id="oauth-apple"><span style="font-weight:900">🍎</span> Log in with Apple</button>
-      <div class="auth-divider">OR</div>
-      <form id="auth-form">
-        <label class="field" id="name-field" style="display:none"><span>Display name</span><input class="input" id="auth-name" autocomplete="name"/></label>
-        <label class="field"><span>Email</span><input class="input" id="auth-email" type="email" required autocomplete="email"/></label>
-        <label class="field"><span>Password</span><input class="input" id="auth-pass" type="password" required minlength="4" autocomplete="current-password"/></label>
-        <button class="btn btn-primary btn-block btn-lg" type="submit" id="auth-submit">Sign in</button>
-      </form>
-      <div class="auth-alt"><a id="auth-guest">Continue as guest →</a></div>
-    </div>
-  </div>`;
-
-  const setTitle = () => {
-    $('#auth-title', root).textContent = mode === 'signin' ? 'Sign in to your account' : 'Create your account';
-    $('#auth-sub', root).innerHTML = mode === 'signin' ? 'New to Ai? <a id="auth-switch">Sign up</a>' : 'Already have an account? <a id="auth-switch">Sign in</a>';
-    $('#auth-submit', root).textContent = mode === 'signin' ? 'Sign in' : 'Sign up';
-    $('#name-field', root).style.display = mode === 'signup' ? '' : 'none';
-    $('#auth-switch', root).onclick = (e) => { e.preventDefault(); mode = mode === 'signin' ? 'signup' : 'signin'; setTitle(); };
-  };
-  setTitle();
-
-  const finish = (guest, name, email) => {
-    state.user = guest ? { name: 'Guest', email: '', guest: true } : { name: name || email.split('@')[0], email, guest: false };
-    save();
-    toast(`Welcome, ${state.user.name}`, 'ok');
-    go(redirect);
-  };
-
-  $('#auth-form', root).addEventListener('submit', (e) => {
-    e.preventDefault();
-    const email = $('#auth-email', root).value.trim();
-    const name = $('#auth-name', root).value.trim();
-    if (!email) return toast('Enter your email', 'err');
-    finish(false, name, email);
-  });
-  $('#oauth-google', root).addEventListener('click', (e) => { e.preventDefault(); finish(false, 'Google User', 'user@gmail.com'); });
-  $('#oauth-apple', root).addEventListener('click', (e) => { e.preventDefault(); finish(false, 'Apple User', 'user@icloud.com'); });
-  $('#auth-guest', root).addEventListener('click', (e) => { e.preventDefault(); finish(true); });
 }
 
 /* ============================== DASHBOARD ============================== */
